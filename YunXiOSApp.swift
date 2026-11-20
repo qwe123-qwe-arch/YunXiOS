@@ -1,0 +1,2 @@
+@main
+struct YunXiOSApp: App {}
