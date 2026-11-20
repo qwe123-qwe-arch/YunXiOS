@@ -1,0 +1,67 @@
+name: Build IPA
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show Xcode
+        run: xcodebuild -version | tee -a build.log
+
+      - name: Generate project
+        run: |
+          brew install xcodegen
+          xcodegen generate --spec project.yml
+
+      - name: Build unsigned app
+        run: |
+          set -o pipefail
+          xcodebuild -list -project YunXiOS.xcodeproj 2>&1 | tee -a build.log
+          xcodebuild -project YunXiOS.xcodeproj \
+            -scheme YunXiOS \
+            -sdk iphoneos \
+            -configuration Release \
+            IPHONEOS_DEPLOYMENT_TARGET=17.0 \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            -derivedDataPath build 2>&1 | tee -a build.log
+
+      - name: Collect error log on failure
+        if: failure()
+        run: |
+          grep -n -i -E "error|warning: " build.log | head -n 200 > build-error.log || true
+          echo "" >> build-error.log
+          echo "---- tail ----" >> build-error.log
+          tail -n 200 build.log >> build-error.log || true
+
+      - name: Package IPA
+        run: |
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/YunXiOS.app Payload/
+          zip -q -r YunXiOS-unsigned.ipa Payload
+          ls -lh YunXiOS-unsigned.ipa
+
+      - name: Upload IPA to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: yunx-${{ github.run_number }}
+          name: YunXiOS build-${{ github.run_number }}
+          files: YunXiOS-unsigned.ipa
+
+      - name: Upload error log to release
+        if: failure()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: yunxlog-${{ github.run_number }}
+          name: YunXiOS error log ${{ github.run_number }}
+          files: build-error.log
