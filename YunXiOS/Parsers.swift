@@ -4,6 +4,11 @@
 
 import Foundation
 
+private func jstr(_ dict: [String: Any]?, _ key: String) -> String {
+    guard let value = dict?[key] as? String, value != "null" else { return "" }
+    return value
+}
+
 // MARK: - 快手解析
 
 enum KuaishouParser {
@@ -42,7 +47,7 @@ enum KuaishouParser {
             throw ParseError.notFound("作品不存在或已删除")
         }
 
-        let title = jsonString(photo, "caption")
+        let title = jstr(photo, "caption")
         let base = NameUtil.sanitize(title).isEmpty ? NameUtil.fallback(.kuaishou, link.id) : NameUtil.sanitize(title)
 
         var medias: [MediaItem] = []
@@ -55,7 +60,7 @@ enum KuaishouParser {
 
         if let atlas = (photo["ext_params"] as? [String: Any])?["atlas"] as? [String: Any],
            let cdnList = atlas["cdnList"] as? [[String: Any]],
-           let cdn = cdnList.first.flatMap({ jsonString($0, "cdn") }).flatMap({ $0.isEmpty ? nil : $0 }),
+           let cdn = cdnList.first.flatMap({ jstr($0, "cdn") }).flatMap({ $0.isEmpty ? nil : $0 }),
            let routes = atlas["list"] as? [String] {
             for (index, route) in routes.enumerated() where !route.isEmpty {
                 if let url = URL(string: Http.secureURL("https://\(cdn)/\(route)")) {
@@ -75,13 +80,13 @@ enum KuaishouParser {
         }
 
         var avatar: URL?
-        let headURL = jsonString(photo, "headUrl")
+        let headURL = jstr(photo, "headUrl")
         if !headURL.isEmpty { avatar = URL(string: Http.secureURL(headURL)) }
 
         return ParseResult(
             platform: .kuaishou,
             title: title.isEmpty ? base : title,
-            author: jsonString(photo, "userName").replacingOccurrences(of: "\u{3164}", with: "").trimmingCharacters(in: .whitespaces),
+            author: jstr(photo, "userName").replacingOccurrences(of: "\u{3164}", with: "").trimmingCharacters(in: .whitespaces),
             avatar: avatar,
             cover: cover,
             text: title,
@@ -92,7 +97,7 @@ enum KuaishouParser {
 
     private static func firstURLString(_ nodes: [[String: Any]]) -> String? {
         for node in nodes {
-            let value = jsonString(node, "url")
+            let value = jstr(node, "url")
             if !value.isEmpty { return value }
         }
         return nil
@@ -171,15 +176,15 @@ enum WeiboParser {
         ]
 
         let pageInfo = post["page_info"] as? [String: Any]
-        let title = jsonString(pageInfo, "title")
+        let title = jstr(pageInfo, "title")
         let base = NameUtil.sanitize(title).isEmpty ? NameUtil.fallback(.weibo, link.id) : NameUtil.sanitize(title)
 
         var medias: [MediaItem] = []
 
         if let urls = pageInfo?["urls"] as? [String: Any] {
-            var candidate = jsonString(urls, "mp4_720p_mp4")
-            if candidate.isEmpty { candidate = jsonString(urls, "mp4_hd_mp4") }
-            if candidate.isEmpty { candidate = jsonString(urls, "mp4_ld_mp4") }
+            var candidate = jstr(urls, "mp4_720p_mp4")
+            if candidate.isEmpty { candidate = jstr(urls, "mp4_hd_mp4") }
+            if candidate.isEmpty { candidate = jstr(urls, "mp4_ld_mp4") }
             if !candidate.isEmpty, let url = URL(string: Http.secureURL(candidate)) {
                 medias.append(MediaItem(url: url, kind: .video, fileName: base + ".mp4", headers: mediaHeaders))
             }
@@ -189,7 +194,7 @@ enum WeiboParser {
             var index = 0
             for pic in pics {
                 guard let large = pic["large"] as? [String: Any] else { continue }
-                let raw = jsonString(large, "url")
+                let raw = jstr(large, "url")
                 guard !raw.isEmpty, let url = URL(string: Http.secureURL(raw)) else { continue }
                 index += 1
                 medias.append(MediaItem(url: url,
@@ -209,22 +214,22 @@ enum WeiboParser {
         }
 
         var cover: URL?
-        if let pic = (pageInfo?["page_pic"] as? [String: Any]), !jsonString(pic, "url").isEmpty {
-            cover = URL(string: Http.secureURL(jsonString(pic, "url")))
+        if let pic = (pageInfo?["page_pic"] as? [String: Any]), !jstr(pic, "url").isEmpty {
+            cover = URL(string: Http.secureURL(jstr(pic, "url")))
         }
 
         let user = post["user"] as? [String: Any]
         var avatar: URL?
-        let avatarRaw = jsonString(user, "profile_image_url")
+        let avatarRaw = jstr(user, "profile_image_url")
         if !avatarRaw.isEmpty { avatar = URL(string: Http.secureURL(avatarRaw)) }
 
         return ParseResult(
             platform: .weibo,
             title: title.isEmpty ? base : title,
-            author: jsonString(user, "screen_name"),
+            author: jstr(user, "screen_name"),
             avatar: avatar,
             cover: cover,
-            text: cleanText(jsonString(post, "text")),
+            text: cleanText(jstr(post, "text")),
             pageURL: link.url,
             medias: medias
         )
