@@ -86,6 +86,15 @@ enum Platform: String, CaseIterable, Identifiable, Codable {
     case bilibili
     case pixiv
     case lanzou
+    case quark
+    case uc
+    case xunlei
+    case baidu
+    case c139
+    case pan123
+    case pan115
+    case guangya
+    case ilanzou
 
     var id: String { rawValue }
 
@@ -99,6 +108,15 @@ enum Platform: String, CaseIterable, Identifiable, Codable {
         case .bilibili: return "哔哩哔哩"
         case .pixiv: return "Pixiv"
         case .lanzou: return "蓝奏云"
+        case .quark: return "夸克网盘"
+        case .uc: return "UC 网盘"
+        case .xunlei: return "迅雷网盘"
+        case .baidu: return "百度网盘"
+        case .c139: return "139 网盘"
+        case .pan123: return "123 云盘"
+        case .pan115: return "115 网盘"
+        case .guangya: return "光鸭云盘"
+        case .ilanzou: return "蓝奏云优享版"
         }
     }
 
@@ -112,6 +130,15 @@ enum Platform: String, CaseIterable, Identifiable, Codable {
         case .bilibili: return .blue
         case .pixiv: return .cyan
         case .lanzou: return .indigo
+        case .quark: return .blue
+        case .uc: return .teal
+        case .xunlei: return .blue
+        case .baidu: return .blue
+        case .c139: return .green
+        case .pan123: return .orange
+        case .pan115: return .blue
+        case .guangya: return .purple
+        case .ilanzou: return .cyan
         }
     }
 }
@@ -295,6 +322,8 @@ enum ParseService {
                     throw ParseError.unknown("链接不合法")
                 }
                 return try await LanzouParser.parse(url: url, pwd: share.pwd)
+            case .quark:
+                return try await QuarkParser.parse(shareID: share.shareID, pwd: share.pwd)
             default:
                 throw ParseError.unsupported("识别到\(share.platform.display)分享（\(share.shareID)）。该网盘要先用账号 Cookie / JWT 登录才能取链，这一版还没接 —— 下一版按平台逐个补。")
             }
@@ -302,7 +331,8 @@ enum ParseService {
         guard let link = LinkDetector.detect(text) else { return nil }
         switch link.platform {
         case .kuaishou:
-            return try await KuaishouParser.parse(link: link)
+            let parsed = try await KuaishouParser.parse(link: link)
+            return await KuaishouVideoFix.enrich(link: link, result: parsed)
         case .weibo:
             return try await WeiboParser.parse(link: link)
         case .acfun:
@@ -317,6 +347,10 @@ enum ParseService {
             throw ParseError.unsupported("Pixiv 需要登录 Cookie，这一版还没接（下一版补）")
         case .lanzou:
             return try await LanzouParser.parse(url: link.url, pwd: nil)
+        case .quark:
+            return try await QuarkParser.parse(shareID: link.id.isEmpty ? "0" : link.id, pwd: nil)
+        case .uc, .xunlei, .baidu, .c139, .pan123, .pan115, .guangya, .ilanzou:
+            throw ParseError.unsupported("\(link.platform.display)解析器还没接（下一版逐个补）")
         }
     }
 }
