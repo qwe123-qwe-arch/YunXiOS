@@ -2,8 +2,6 @@ import Foundation
 import SwiftUI
 import WebKit
 
-// MARK: - 夸克常量与 Cookie 存储
-
 enum QuarkConfig {
     static let apiBase = "https://drive-pc.quark.cn"
     static let tokenURL = apiBase + "/1/clouddrive/share/sharepage/token?pr=ucpro&fr=pc"
@@ -11,6 +9,7 @@ enum QuarkConfig {
     static let downloadURL = apiBase + "/1/clouddrive/file/download?pr=ucpro&fr=pc&sys=win32&ve=3.23.2"
     static let apiUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.12-a038f7b798 Safari/537.36 Channel/pckk_other_ch"
     static let cookieKey = "quark.cookie"
+    static let loginURL = "https://pan.quark.cn/login"
 }
 
 enum QuarkCookieStore {
@@ -18,9 +17,7 @@ enum QuarkCookieStore {
         get { UserDefaults.standard.string(forKey: QuarkConfig.cookieKey) ?? "" }
         set { UserDefaults.standard.set(newValue, forKey: QuarkConfig.cookieKey) }
     }
-
     static var loggedIn: Bool { !cookie.isEmpty }
-
     static func merge(setCookies: [String]) {
         guard !setCookies.isEmpty else { return }
         var jar: [String: String] = [:]
@@ -37,8 +34,6 @@ enum QuarkCookieStore {
     }
 }
 
-// MARK: - 夸克分享解析
-
 enum QuarkParser {
 
     private struct ShareFile {
@@ -51,7 +46,6 @@ enum QuarkParser {
 
     static func parse(shareID: String, pwd: String?) async throws -> ParseResult {
         var cookie = QuarkCookieStore.cookie
-
         let tokenBody: [String: Any] = [
             "pwd_id": shareID,
             "passcode": pwd ?? "",
@@ -60,7 +54,6 @@ enum QuarkParser {
         let tokenResp = try await postJSON(QuarkConfig.tokenURL, body: tokenBody, cookie: cookie)
         QuarkCookieStore.merge(setCookies: tokenResp.setCookies)
         cookie = QuarkCookieStore.cookie
-
         let tokenData = tokenResp.json["data"] as? [String: Any]
         guard let stoken = tokenData?["stoken"] as? String, !stoken.isEmpty else {
             let code = (tokenResp.json["code"] as? NSNumber)?.intValue ?? 0
@@ -68,7 +61,6 @@ enum QuarkParser {
             throw ParseError.unknown("夸克没返回 stoken（code=\(code)），可能链接失效")
         }
         let shareTitle = (tokenData?["title"] as? String) ?? ""
-
         var files = try await listShare(shareID: shareID, stoken: stoken, pdirFid: "0", cookie: cookie, page: 1)
         if files.count == 1, files[0].isDir {
             files = try await listShare(shareID: shareID, stoken: stoken, pdirFid: files[0].fid, cookie: cookie, page: 1)
@@ -77,7 +69,6 @@ enum QuarkParser {
         guard !downloadable.isEmpty else {
             throw ParseError.notFound("这个分享里没有可下载的文件（可能是空文件夹）")
         }
-
         var medias: [MediaItem] = []
         var lastError: Error?
         for file in downloadable.prefix(20) {
@@ -87,14 +78,9 @@ enum QuarkParser {
                                         kind: MediaKind.from(fileName: file.name),
                                         fileName: file.name.isEmpty ? "quark_\(file.fid)" : file.name,
                                         headers: link.headers))
-            } catch {
-                lastError = error
-            }
+            } catch { lastError = error }
         }
-        guard !medias.isEmpty else {
-            throw lastError ?? ParseError.unknown("夸克没取到直链")
-        }
-
+        guard !medias.isEmpty else { throw lastError ?? ParseError.unknown("夸克没取到直链") }
         return ParseResult(
             platform: .quark,
             title: shareTitle.isEmpty ? "夸克分享 \(shareID)" : shareTitle,
@@ -125,14 +111,12 @@ enum QuarkParser {
             URLQueryItem(name: "_sort", value: "file_type:asc,file_name:asc")
         ])
         components.queryItems = items
-
         var headers: [String: String] = [
             "User-Agent": QuarkConfig.apiUA,
             "Origin": "https://pan.quark.cn",
             "Referer": "https://pan.quark.cn/"
         ]
         if !cookie.isEmpty { headers["Cookie"] = cookie }
-
         let result = try await Http.get(components.url!, headers: headers)
         guard let data = result.body.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -199,7 +183,6 @@ enum QuarkParser {
         request.setValue("https://pan.quark.cn/", forHTTPHeaderField: "Referer")
         if !cookie.isEmpty { request.setValue(cookie, forHTTPHeaderField: "Cookie") }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
         let config = URLSessionConfiguration.ephemeral
         config.httpShouldSetCookies = false
         let session = URLSession(configuration: config)
@@ -220,8 +203,6 @@ enum QuarkParser {
     }
 }
 
-// MARK: - 文件名判类型
-
 extension MediaKind {
     static func from(fileName: String) -> MediaKind {
         let lower = fileName.lowercased()
@@ -231,8 +212,6 @@ extension MediaKind {
         return .file
     }
 }
-
-// MARK: - 夸克登录（WKWebView 抓 Cookie）
 
 struct QuarkLoginView: View {
     @Environment(\.dismiss) private var dismiss
@@ -276,7 +255,7 @@ struct QuarkWebView: UIViewRepresentable {
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
-        if let url = URL(string: "https://pan.quark.cn/") {
+        if let url = URL(string: QuarkConfig.loginURL) {
             webView.load(URLRequest(url: url))
         }
         return webView
@@ -288,7 +267,6 @@ struct QuarkWebView: UIViewRepresentable {
 
     final class Coordinator: NSObject, WKNavigationDelegate {
         var parent: QuarkWebView
-
         init(_ parent: QuarkWebView) { self.parent = parent }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -335,6 +313,22 @@ struct QuarkAccountView: View {
             }
 
             Section {
+                NavigationLink {
+                    XunleiAccountView()
+                } label: {
+                    HStack {
+                        Text("迅雷账号")
+                        Spacer()
+                        Text(XunleiStore.loggedIn ? "已登录" : "未登录")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            } header: {
+                Text("其它网盘")
+            }
+
+            Section {
                 TextEditor(text: $cookieDraft)
                     .frame(minHeight: 90)
                     .textInputAutocapitalization(.never)
@@ -345,10 +339,10 @@ struct QuarkAccountView: View {
             } header: {
                 Text("手动填 Cookie")
             } footer: {
-                Text("格式：__pus=...; __puus=...，从浏览器开发者工具里复制。")
+                Text("格式：__pus=...; __puus=...，从浏览器开发者工具复制。")
             }
         }
-        .navigationTitle("夸克账号")
+        .navigationTitle("网盘账号")
         .sheet(isPresented: $showLogin) {
             QuarkLoginView()
         }
