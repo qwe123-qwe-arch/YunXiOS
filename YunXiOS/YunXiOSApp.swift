@@ -1,6 +1,5 @@
 //
-//  YunXiOS · 云析 iOS 版
-//  解析逻辑移植自 YunX (https://github.com/CYQawa/YunX, AGPL-3.0)
+//  YunXiOS · 云析 iOS 版（解析逻辑移植自 YunX / AGPL-3.0）
 //
 
 import SwiftUI
@@ -16,8 +15,6 @@ struct YunXiOSApp: App {
         }
     }
 }
-
-// MARK: - 模型
 
 enum MediaKind {
     case video
@@ -74,8 +71,6 @@ enum ParseError: LocalizedError {
         }
     }
 }
-
-// MARK: - 平台
 
 enum Platform: String, CaseIterable, Identifiable, Codable {
     case kuaishou
@@ -142,8 +137,6 @@ enum Platform: String, CaseIterable, Identifiable, Codable {
         }
     }
 }
-
-// MARK: - 链接识别（移植 VideoLinkParser）
 
 struct DetectedLink {
     var platform: Platform
@@ -213,8 +206,6 @@ enum LinkDetector {
         return nil
     }
 }
-
-// MARK: - HTTP
 
 struct HttpResult {
     var status: Int
@@ -310,8 +301,6 @@ enum Http {
     }
 }
 
-// MARK: - 解析服务
-
 enum ParseService {
 
     static func parse(text: String) async throws -> ParseResult? {
@@ -324,6 +313,8 @@ enum ParseService {
                 return try await LanzouParser.parse(url: url, pwd: share.pwd)
             case .quark:
                 return try await QuarkParser.parse(shareID: share.shareID, pwd: share.pwd)
+            case .xunlei:
+                return try await XunleiService.parse(shareID: share.shareID, passCode: share.pwd)
             default:
                 throw ParseError.unsupported("识别到\(share.platform.display)分享（\(share.shareID)）。该网盘要先用账号 Cookie / JWT 登录才能取链，这一版还没接 —— 下一版按平台逐个补。")
             }
@@ -349,13 +340,13 @@ enum ParseService {
             return try await LanzouParser.parse(url: link.url, pwd: nil)
         case .quark:
             return try await QuarkParser.parse(shareID: link.id.isEmpty ? "0" : link.id, pwd: nil)
-        case .uc, .xunlei, .baidu, .c139, .pan123, .pan115, .guangya, .ilanzou:
+        case .xunlei:
+            return try await XunleiService.parse(shareID: link.id.isEmpty ? "0" : link.id, passCode: nil)
+        case .uc, .baidu, .c139, .pan123, .pan115, .guangya, .ilanzou:
             throw ParseError.unsupported("\(link.platform.display)解析器还没接（下一版逐个补）")
         }
     }
 }
-
-// MARK: - 通用小工具
 
 enum NameUtil {
     static func sanitize(_ raw: String) -> String {
