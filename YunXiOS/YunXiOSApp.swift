@@ -355,6 +355,10 @@ enum ParseService {
             return try await LanzouParser.parse(url: link.url, pwd: nil)
         case .quark:
             return try await QuarkParser.parse(shareID: link.id.isEmpty ? "0" : link.id, pwd: nil)
+        case .uc:
+            return try await UCParser.parse(shareID: link.id.isEmpty ? "0" : link.id, pwd: nil)
+        case .pan115:
+            return try await Pan115Parser.parse(shareID: link.id.isEmpty ? "0" : link.id, pwd: nil)
         case .xunlei:
             return try await XunleiService.parse(shareID: link.id.isEmpty ? "0" : link.id, passCode: nil)
         case .baidu, .c139, .pan123, .guangya, .ilanzou:
