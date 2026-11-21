@@ -27,6 +27,7 @@ struct ResolveView: View {
     @State private var showError = false
     @State private var showManual = false
 
+    @FocusState private var inputFocused: Bool
     private var detected: DetectedLink? { LinkDetector.detect(input) }
 
     var body: some View {
@@ -37,11 +38,19 @@ struct ResolveView: View {
                     detectedChip
                     actionButtons
                     hintCard
+                    Spacer(minLength: 0)
                 }
                 .padding()
             }
             .navigationTitle("云析")
-            .scrollDismissesKeyboard(.interactively)
+            .scrollDismissesKeyboard(.immediately)
+            .onTapGesture { inputFocused = false }
+            .toolbar {
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("完成") { inputFocused = false }
+                }
+            }
             .sheet(item: $result) { item in
                 ResultView(result: item)
                     .environmentObject(store)
@@ -59,18 +68,21 @@ struct ResolveView: View {
     }
 
     private var inputCard: some View {
-        ZStack(alignment: .topLeading) {
-            if input.isEmpty {
-                Text("粘贴分享链接或直链，例如 快手/微博 作品页、或任意 http 直链")
-                    .foregroundStyle(.secondary)
-                    .padding(.top, 8)
-                    .padding(.leading, 5)
+        VStack(alignment: .leading, spacing: 8) {
+            ZStack(alignment: .topLeading) {
+                if input.isEmpty {
+                    Text("粘贴分享链接或直链，例如 快手/微博 作品页、夸克/蓝奏云分享、或任意 http 直链")
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 8)
+                        .padding(.leading, 5)
+                }
+                TextEditor(text: $input)
+                    .frame(minHeight: 130)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .scrollContentBackground(.hidden)
+                    .focused($inputFocused)
             }
-            TextEditor(text: $input)
-                .frame(minHeight: 130)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .scrollContentBackground(.hidden)
         }
         .padding(12)
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
@@ -134,10 +146,13 @@ struct ResolveView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("当前已接入")
                 .font(.footnote.weight(.semibold))
-            Text("快手（视频 / 图集）、微博（视频 / 九宫格）、任意 Range 直链下载")
+            Text("快手（视频 / 图集）、微博（视频 / 九宫格）、蓝奏云、夸克分享、任意 Range 直链")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-            Text("拖音 / 小红书 / B站 / Pixiv / AcFun 与各网盘解析器在下一版接入")
+            Text("10 家网盘链接都能识别并带提取码；已通：蓝奏云、夸克（游客 50MB，登录后不限）")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+            Text("待接：抖音 / 小红书 / B站 / Pixiv / AcFun，UC / 百度 / 123 / 115 / 迅雷 / 139 / 光鸭 / 蓝奏云优享版")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }
@@ -149,22 +164,21 @@ struct ResolveView: View {
     private func parse() {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
+        inputFocused = false
         busy = true
         Task {
+            defer { Task { @MainActor in busy = false } }
             do {
-                let parsed = try await ParseService.parse(text: text)
-                await MainActor.run {
-                    busy = false
-                    if let parsed = parsed {
-                        result = parsed
-                    } else {
+                if let parsed = try await ParseService.parse(text: text) {
+                    await MainActor.run { result = parsed }
+                } else {
+                    await MainActor.run {
                         errorMessage = "没识别出受支持的平台链接。想直接下载的话，点下面的「直接当直链下载」。"
                         showError = true
                     }
                 }
             } catch {
                 await MainActor.run {
-                    busy = false
                     errorMessage = error.localizedDescription
                     showError = true
                 }
@@ -345,7 +359,7 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    ForEach(Platform.allCases) { platform in
+                    ForEach(Platform.allCases.filter { !["quark", "uc", "xunlei", "baidu", "c139", "pan123", "pan115", "guangya", "ilanzou", "lanzou"].contains($0.rawValue) }) { platform in
                         HStack {
                             Circle().fill(platform.color).frame(width: 8, height: 8)
                             Text(platform.display)
@@ -356,16 +370,48 @@ struct SettingsView: View {
                         }
                     }
                 } header: {
-                    Text("解析能力")
+                    Text("视频解析能力")
                 } footer: {
-                    Text("网盘登录解析（夸克 / UC / 百度 / 123 / 115 / 迅雷 / 蓝奏云）在下一版接入，账号页届时开放。")
+                    Text("网盘解析在下面的「网盘账号」里登录后生效：夸克已接（游客≤50MB，登录后不限）。")
+                }
+
+                Section {
+                    NavigationLink {
+                        QuarkAccountView()
+                    } label: {
+                        HStack {
+                            Text("夸克账号")
+                            Spacer()
+                            Text(QuarkCookieStore.loggedIn ? "已登录" : "未登录（游客 50MB）")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                } header: {
+                    Text("网盘账号")
+                }
+
+                Section {
+                    ForEach(NetdiskPlatform.allCases) { platform in
+                        HStack {
+                            Text(platform.display)
+                            Spacer()
+                            Text(["lanzou", "quark"].contains(platform.rawValue) ? "已接入" : "待接入")
+                                .font(.caption)
+                                .foregroundStyle(["lanzou", "quark"].contains(platform.rawValue) ? Color.green : Color.secondary)
+                        }
+                    }
+                } header: {
+                    Text("网盘（10 家）")
+                } footer: {
+                    Text("蓝奏云匿名单文件已通；夸克游客可解析 ≤50MB，登录后走账号态。其余 8 家下一轮逐个补。")
                 }
 
                 Section {
                     HStack {
                         Text("版本")
                         Spacer()
-                        Text("1.0 (b1)").foregroundStyle(.secondary)
+                        Text("1.1 (b2)").foregroundStyle(.secondary)
                     }
                     Link("YunX 原始项目（AGPL-3.0）", destination: URL(string: "https://github.com/CYQawa/YunX")!)
                 } header: {
@@ -380,7 +426,7 @@ struct SettingsView: View {
 
     private func status(for platform: Platform) -> String {
         switch platform {
-        case .kuaishou, .weibo: return "已接入"
+        case .kuaishou, .weibo, .lanzou, .quark: return "已接入"
         default: return "下一版"
         }
     }
