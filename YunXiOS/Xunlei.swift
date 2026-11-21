@@ -120,30 +120,8 @@ enum XunleiService {
         return ""
     }
 
-    static func login(username: String, password: String) async throws {
+    static func exchange(sessionId: String) async throws {
         let deviceId = XunleiStore.deviceId
-        var body = loginBody(deviceId: deviceId)
-        body["userName"] = username
-        body["passWord"] = password
-        body["verifyKey"] = ""
-        body["verifyCode"] = ""
-        body["isMd5Pwd"] = "0"
-        let resp = try await postJSON(XunleiConfig.loginURL, body: body, headers: [
-            "User-Agent": "android-ok-http-client/xl-acc-sdk/version-5.1.3.513006",
-            "Content-Type": "application/json"
-        ])
-        let errorCode = (resp["errorCode"] as? String) ?? ""
-        let error = (resp["error"] as? String) ?? ""
-        guard errorCode == "0" || error == "success" else {
-            let review = (resp["reviewurl"] as? String) ?? ""
-            if error == "review_panel" || errorCode == "1007" || !review.isEmpty {
-                throw ParseError.blocked("迅雷要求短信/安全验证，请先在迅雷 App 或网页完成验证后再试")
-            }
-            let desc = (resp["errorDesc"] as? String) ?? (resp["error_description"] as? String) ?? "登录失败（\(error) \(errorCode)）"
-            throw ParseError.blocked(desc)
-        }
-        let sessionId = (resp["sessionID"] as? String) ?? ""
-        guard !sessionId.isEmpty else { throw ParseError.unknown("迅雷登录没有返回 sessionID") }
         let captcha = try? await initCaptcha(action: "POST:/v1/auth/signin/token")
         var headers: [String: String] = [
             "User-Agent": XunleiConfig.webUA,
@@ -167,24 +145,94 @@ enum XunleiService {
         XunleiStore.userId = jwtSub(access)
     }
 
-    private static func loginBody(deviceId: String) -> [String: Any] {
+    static func sendSMS(mobile: String) async throws -> (credit: String, token: String) {
+        let body = loginBody(deviceId: XunleiStore.deviceId, clientVersion: "8.31.0.9726", sdkVersion: "231500").merging([
+            "mobile": mobile,
+            "register": "0"
+        ]) { $1 }
+        let resp = try await postJSON(XunleiConfig.authBase + "/xluser.core.login/v3/sendsms", body: body, headers: [
+            "User-Agent": "android-ok-http-client/xl-acc-sdk/version-5.0.12.512000",
+            "Content-Type": "application/json"
+        ])
+        let error = (resp["error"] as? String) ?? ""
+        if error == "success" || (resp["errorCode"] as? String) == "0" {
+            let credit = (resp["creditkey"] as? String) ?? ""
+            let token = (resp["token"] as? String) ?? ""
+            if credit.isEmpty || token.isEmpty { throw ParseError.unknown("迅雷短信接口没返回 creditkey/token") }
+            return (credit, token)
+        }
+        let desc = (resp["errorDesc"] as? String) ?? "短信发送失败（\(error)）"
+        throw ParseError.blocked(desc)
+    }
+
+    static func smsLogin(mobile: String, code: String, credit: String, smsToken: String) async throws {
+        let body = loginBody(deviceId: XunleiStore.deviceId, clientVersion: "8.31.0.9726", sdkVersion: "231500", creditKey: credit).merging([
+            "mobile": mobile,
+            "smsCode": code,
+            "token": smsToken,
+            "register": "0"
+        ]) { $1 }
+        let resp = try await postJSON(XunleiConfig.authBase + "/xluser.core.login/v3/smslogin", body: body, headers: [
+            "User-Agent": "android-ok-http-client/xl-acc-sdk/version-5.0.12.512000",
+            "Content-Type": "application/json"
+        ])
+        let errorCode = (resp["errorCode"] as? String) ?? ""
+        let error = (resp["error"] as? String) ?? ""
+        guard errorCode == "0" || error == "success" else {
+            let desc = (resp["errorDesc"] as? String) ?? "短信登录失败（\(error) \(errorCode)）"
+            throw ParseError.blocked(desc)
+        }
+        let sessionId = (resp["sessionID"] as? String) ?? ""
+        guard !sessionId.isEmpty else { throw ParseError.unknown("迅雷短信登录没返回 sessionID") }
+        try await exchange(sessionId: sessionId)
+    }
+
+    static func login(username: String, password: String) async throws {
+        let deviceId = XunleiStore.deviceId
+        var body = loginBody(deviceId: deviceId)
+        body["userName"] = username
+        body["passWord"] = password
+        body["verifyKey"] = ""
+        body["verifyCode"] = ""
+        body["isMd5Pwd"] = "0"
+        let resp = try await postJSON(XunleiConfig.loginURL, body: body, headers: [
+            "User-Agent": "android-ok-http-client/xl-acc-sdk/version-5.1.3.513006",
+            "Content-Type": "application/json"
+        ])
+        let errorCode = (resp["errorCode"] as? String) ?? ""
+        let error = (resp["error"] as? String) ?? ""
+        guard errorCode == "0" || error == "success" else {
+            let review = (resp["reviewurl"] as? String) ?? ""
+            if error == "review_panel" || errorCode == "1007" || !review.isEmpty {
+                throw ParseError.blocked("迅雷要求短信/安全验证，请改用「手机号 + 短信」登录")
+            }
+            let desc = (resp["errorDesc"] as? String) ?? "登录失败（\(error) \(errorCode)）"
+            throw ParseError.blocked(desc)
+        }
+        let sessionId = (resp["sessionID"] as? String) ?? ""
+        guard !sessionId.isEmpty else { throw ParseError.unknown("迅雷登录没有返回 sessionID") }
+        _ = deviceId
+        try await exchange(sessionId: sessionId)
+    }
+
+    private static func loginBody(deviceId: String, clientVersion: String = "25.0.5.25", sdkVersion: String = "513006", creditKey: String = "") -> [String: Any] {
         [
             "protocolVersion": "301",
             "sequenceNo": String(Int.random(in: 10000000...99999999)),
             "platformVersion": "10",
             "isCompressed": "0",
             "appid": "40",
-            "clientVersion": "25.0.5.25",
+            "clientVersion": clientVersion,
             "peerID": XunleiStore.peerId,
             "appName": "ANDROID-com.xunlei.downloadprovider",
-            "sdkVersion": "513006",
+            "sdkVersion": sdkVersion,
             "devicesign": XunleiStore.deviceSign,
             "netWorkType": "WIFI",
             "providerName": "NONE",
             "deviceModel": "M2004J7AC",
             "deviceName": "Xiaomi_M2004j7ac",
             "OSVersion": "12",
-            "creditkey": "",
+            "creditkey": creditKey,
             "hl": "zh-CN"
         ]
     }
@@ -243,7 +291,7 @@ enum XunleiService {
             throw ParseError.notFound("这个迅雷分享里没有可下载的文件")
         }
         guard XunleiStore.loggedIn else {
-            throw ParseError.blocked("迅雷分享已读到「\(title.isEmpty ? shareID : title)」，但迅雷取直链必须登录：请到 设置 → 网盘账号 → 迅雷账号 登录后再解析。")
+            throw ParseError.blocked("迅雷分享已读到「\(title.isEmpty ? shareID : title)」，但取直链必须登录：设置 → 网盘账号 → 迅雷账号（手机号+短信）登录后再解析。")
         }
         var medias: [MediaItem] = []
         var lastError: Error?
@@ -409,7 +457,13 @@ enum XunleiService {
 struct XunleiAccountView: View {
     @State private var username = ""
     @State private var password = ""
+    @State private var mobile = ""
+    @State private var smsCode = ""
+    @State private var credit = ""
+    @State private var smsToken = ""
     @State private var busy = false
+    @State private var sending = false
+    @State private var countdown = 0
     @State private var message: String?
     @State private var showAlert = false
 
@@ -423,14 +477,38 @@ struct XunleiAccountView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                Button("退出登录", role: .destructive) {
-                    XunleiStore.clear()
-                }
-                .disabled(!XunleiStore.loggedIn)
+                Button("退出登录", role: .destructive) { XunleiStore.clear() }
+                    .disabled(!XunleiStore.loggedIn)
             } header: {
                 Text("迅雷账号")
             } footer: {
                 Text("迅雷分享列表可以不登录看，但下载直链必须先登录（官方限制）。")
+            }
+
+            Section {
+                TextField("手机号", text: $mobile)
+                    .keyboardType(.numberPad)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                HStack {
+                    TextField("短信验证码", text: $smsCode)
+                        .keyboardType(.numberPad)
+                    Button(countdown > 0 ? "重发 \(countdown)s" : "获取验证码") {
+                        sendCode()
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(sending || countdown > 0 || mobile.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+                Button {
+                    loginSMS()
+                } label: {
+                    if busy { ProgressView() } else { Text("短信验证码登录") }
+                }
+                .disabled(busy || mobile.isEmpty || smsCode.isEmpty || credit.isEmpty)
+            } header: {
+                Text("手机号 + 短信（安全验证走这里）")
+            } footer: {
+                Text("密码登录被要求「短信/安全验证」时用这个：先发验证码，填码登录成功后直接拿 token。")
             }
 
             Section {
@@ -439,15 +517,15 @@ struct XunleiAccountView: View {
                     .autocorrectionDisabled()
                 SecureField("密码", text: $password)
                 Button {
-                    login()
+                    loginPassword()
                 } label: {
-                    if busy { ProgressView() } else { Text("登录迅雷") }
+                    if busy { ProgressView() } else { Text("账号密码登录") }
                 }
                 .disabled(busy || username.isEmpty || password.isEmpty)
             } header: {
                 Text("账号密码登录")
             } footer: {
-                Text("登录走迅雷官方 app 接口（v3/login + signin/token），token 只存本机。若提示需要安全验证，请先在迅雷 App 里完成一次验证再回来登录。")
+                Text("走迅雷官方 v3/login；若返回 review_panel 会被要求安全验证，请改用上面的短信登录。")
             }
         }
         .navigationTitle("迅雷账号")
@@ -458,7 +536,63 @@ struct XunleiAccountView: View {
         }
     }
 
-    private func login() {
+    private func sendCode() {
+        sending = true
+        Task {
+            do {
+                let pair = try await XunleiService.sendSMS(mobile: mobile.trimmingCharacters(in: .whitespaces))
+                await MainActor.run {
+                    sending = false
+                    credit = pair.credit
+                    smsToken = pair.token
+                    countdown = 60
+                    message = "验证码已发送"
+                    showAlert = true
+                }
+                startCountdown()
+            } catch {
+                await MainActor.run {
+                    sending = false
+                    message = error.localizedDescription
+                    showAlert = true
+                }
+            }
+        }
+    }
+
+    private func startCountdown() {
+        Task {
+            while countdown > 0 {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                await MainActor.run { countdown -= 1 }
+            }
+        }
+    }
+
+    private func loginSMS() {
+        busy = true
+        Task {
+            do {
+                try await XunleiService.smsLogin(mobile: mobile.trimmingCharacters(in: .whitespaces),
+                                                 code: smsCode.trimmingCharacters(in: .whitespaces),
+                                                 credit: credit,
+                                                 smsToken: smsToken)
+                await MainActor.run {
+                    busy = false
+                    message = "登录成功"
+                    showAlert = true
+                }
+            } catch {
+                await MainActor.run {
+                    busy = false
+                    message = error.localizedDescription
+                    showAlert = true
+                }
+            }
+        }
+    }
+
+    private func loginPassword() {
         busy = true
         Task {
             do {
@@ -471,7 +605,7 @@ struct XunleiAccountView: View {
             } catch {
                 await MainActor.run {
                     busy = false
-                    message = error.localizedDescription
+                    message = error.localizedDescription + "\n若提示安全验证，请用上方「手机号 + 短信」登录。"
                     showAlert = true
                 }
             }
